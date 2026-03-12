@@ -1,0 +1,35 @@
+# Unity Generated Files (DO NOT TRACK)
+Library/
+Logs/
+Temp/
+obj/
+.vs/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+
+# User-Specific & System Files
+UserSettings/
+*.user
+.DS_Store
+Thumbs.db
+Leaderboard-Unity.txt
+
+# Ignore Unity Collab files
+.collabignore
+
+#ignore webGL build
+*.wasm
+#Extra Assets
+Extra/
+Extra.meta
+Builds
+
+#editor
+.editorconfig
+.vscode/
+
+#specific 
+TerrainSampleAssets
+terrainPackage.unitypackage
