@@ -5,6 +5,8 @@ TagManager:
   serializedVersion: 3
   tags:
   - Anchor
+  - Door
+  - Window
   layers:
   - Default
   - TransparentFX
