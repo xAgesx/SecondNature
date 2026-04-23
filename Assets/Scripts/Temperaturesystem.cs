@@ -6,9 +6,7 @@ using UnityEngine.Events;
 // Attach to: XR Rig (root player object)
 //
 // Central stat manager. Everything that damages the player calls
-// TemperatureSystem.Instance.AddHeat(amount). Nothing else needs to know
-// about UI, VFX, or game over — this class fires UnityEvents that other
-// scripts listen to.
+// TemperatureSystem.Instance.AddHeat(amount, "Source Name").
 // ─────────────────────────────────────────────────────────────────────────────
 public class TemperatureSystem : MonoBehaviour
 {
@@ -25,10 +23,8 @@ public class TemperatureSystem : MonoBehaviour
     [Tooltip("The VFX GameObject on the XR Camera that plays when the player takes any heat damage.")]
     public GameObject damageVFX;
 
-    // ── Events — hook these up in the Inspector or from other scripts ─────────
-    // Fires every time temperature changes. Passes the new temperature value.
+    // ── Events ────────────────────────────────────────────────────────────────
     public UnityEvent<float> onTemperatureChanged;
-    // Fires once when maxTemp is reached.
     public UnityEvent onGameOver;
 
     // ── Runtime state ─────────────────────────────────────────────────────────
@@ -39,30 +35,44 @@ public class TemperatureSystem : MonoBehaviour
 
     private void Awake()
     {
-        // Singleton so any damage source can reach this without a reference
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
 
         CurrentTemp = startingTemp;
     }
 
+    private void Start()
+    {
+        // ── DEBUG: print starting state on spawn ──────────────────────────────
+        Debug.Log($"[TemperatureSystem] Player spawned — " +
+                  $"Temp: {CurrentTemp:F1}°C  |  Max: {maxTemp:F1}°C  |  " +
+                  $"Remaining: {maxTemp - CurrentTemp:F1}°C before game over");
+    }
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Call this from any damage source to raise the player's temperature.
-    /// e.g. TemperatureSystem.Instance.AddHeat(2f);
+    /// Raises the player's temperature.
+    /// Pass a human-readable source so debug logs are useful.
+    /// e.g. TemperatureSystem.Instance.AddHeat(2f, "Bare Hand");
     /// </summary>
-    public void AddHeat(float amount)
+    public void AddHeat(float amount, string source = "Unknown")
     {
         if (_isDead) return;
 
+        float tempBefore = CurrentTemp;
         CurrentTemp += amount;
         CurrentTemp = Mathf.Clamp(CurrentTemp, startingTemp, maxTemp);
+        float actualAdded = CurrentTemp - tempBefore;
 
-        // Trigger damage VFX
+        // ── DEBUG: damage receipt ─────────────────────────────────────────────
+        Debug.Log($"[TemperatureSystem] 🔥 Damage taken — " +
+                  $"Source: {source}  |  " +
+                  $"+{actualAdded:F1}°C  |  " +
+                  $"Temp now: {CurrentTemp:F1}°C / {maxTemp:F1}°C  |  " +
+                  $"Remaining: {maxTemp - CurrentTemp:F1}°C");
+
         PlayDamageVFX();
-
-        // Notify UI / anything else listening
         onTemperatureChanged?.Invoke(CurrentTemp);
 
         if (CurrentTemp >= maxTemp)
@@ -74,19 +84,15 @@ public class TemperatureSystem : MonoBehaviour
     private void PlayDamageVFX()
     {
         if (damageVFX == null) return;
-
-        // If it's a ParticleSystem, play it. Otherwise just activate it.
         var ps = damageVFX.GetComponent<ParticleSystem>();
-        if (ps != null)
-            ps.Play();
-        else
-            damageVFX.SetActive(true);
+        if (ps != null) ps.Play();
+        else damageVFX.SetActive(true);
     }
 
     private void TriggerGameOver()
     {
         _isDead = true;
+        Debug.LogWarning($"[TemperatureSystem] ☠️ GAME OVER — Temp reached {maxTemp:F1}°C");
         onGameOver?.Invoke();
-        Debug.Log("[TemperatureSystem] Game Over — temp reached " + maxTemp);
     }
 }

@@ -6,14 +6,15 @@ using UnityEngine;
 // Attach to: XR Rig root (same object as TemperatureSystem)
 //
 // All damage types live here. Toggle each one on/off in the Inspector.
-// To add a new damage type later: add a new [Header] block + handler method.
+// Hand contact is now driven by DangerousInteractable on Door/Window objects
+// — no hand colliders needed.
 // ─────────────────────────────────────────────────────────────────────────────
 public class PlayerDamageHandler : MonoBehaviour
 {
     // ── Bare hand contact ─────────────────────────────────────────────────────
 
     [Header("Bare hand contact")]
-    [Tooltip("Enable damage when bare hand touches a Door or Window tagged object.")]
+    [Tooltip("Enable damage when a bare hand hovers over a Door or Window interactable.")]
     public bool bareHandDamageEnabled = true;
 
     [Tooltip("Heat added on bare hand contact.")]
@@ -57,16 +58,19 @@ public class PlayerDamageHandler : MonoBehaviour
     private bool _inSmokeZone = false;
     private Coroutine _smokeDamageCoroutine;
 
-    // ── Hand contact (called by hand colliders) ───────────────────────────────
-    // Your hand GameObjects still need a Trigger Collider.
-    // Add a small companion script (HandContactReporter) on each hand —
-    // it just forwards the collision up to this script on the XR Rig.
+    // ── Bare hand contact (called by DangerousInteractable on Door/Window) ────
 
     public void OnBareHandTouchedSurface()
     {
-        if (!bareHandDamageEnabled) return;
-        ScoreTracker.Instance?.RegisterError();          
-        TemperatureSystem.Instance.AddHeat(bareHandHeat);
+        if (!bareHandDamageEnabled)
+        {
+            Debug.Log("[PlayerDamageHandler] Bare hand contact detected but damage is DISABLED.");
+            return;
+        }
+
+        Debug.Log("[PlayerDamageHandler] 🖐️ Bare hand touched dangerous surface — dealing damage.");
+        ScoreTracker.Instance?.RegisterError();
+        TemperatureSystem.Instance.AddHeat(bareHandHeat, "Bare Hand Contact");
         PlayVFX(bareHandVFX);
     }
 
@@ -74,9 +78,22 @@ public class PlayerDamageHandler : MonoBehaviour
 
     public void OnEnterSmokeZone()
     {
-        if (!smokeDamageEnabled) return;
-        if (_inSmokeZone) return;
-        ScoreTracker.Instance?.RegisterError();          
+        if (!smokeDamageEnabled)
+        {
+            Debug.Log("[PlayerDamageHandler] Entered smoke zone but smoke damage is DISABLED.");
+            return;
+        }
+
+        if (_inSmokeZone)
+        {
+            Debug.Log("[PlayerDamageHandler] Entered smoke zone but already tracking one — ignoring.");
+            return;
+        }
+
+        Debug.Log("[PlayerDamageHandler] 💨 Entered SMOKE zone — starting damage loop " +
+                  $"({smokeHeatPerTick:F1}°C every {smokeTickInterval:F1}s).");
+
+        ScoreTracker.Instance?.RegisterError();
         _inSmokeZone = true;
         SetVFX(smokeOverlayVFX, true);
         _smokeDamageCoroutine = StartCoroutine(SmokeDamageLoop());
@@ -84,6 +101,7 @@ public class PlayerDamageHandler : MonoBehaviour
 
     public void OnExitSmokeZone()
     {
+        Debug.Log("[PlayerDamageHandler] 💨 Exited SMOKE zone — damage loop stopped.");
         _inSmokeZone = false;
         SetVFX(smokeOverlayVFX, false);
 
@@ -96,9 +114,15 @@ public class PlayerDamageHandler : MonoBehaviour
 
     public void OnEnterFireZone()
     {
-        if (!fireDamageEnabled) return;
+        if (!fireDamageEnabled)
+        {
+            Debug.Log("[PlayerDamageHandler] Entered fire zone but fire damage is DISABLED.");
+            return;
+        }
+
+        Debug.Log($"[PlayerDamageHandler] 🔥 Entered FIRE zone — dealing {fireHeatOnEnter:F1}°C instantly.");
         ScoreTracker.Instance?.RegisterError();
-        TemperatureSystem.Instance.AddHeat(fireHeatOnEnter);
+        TemperatureSystem.Instance.AddHeat(fireHeatOnEnter, "Fire Zone");
         PlayVFX(fireOverlayVFX);
 
         if (fireVFXDuration > 0f)
@@ -107,6 +131,7 @@ public class PlayerDamageHandler : MonoBehaviour
 
     public void OnExitFireZone()
     {
+        Debug.Log("[PlayerDamageHandler] 🔥 Exited FIRE zone.");
         SetVFX(fireOverlayVFX, false);
     }
 
@@ -118,7 +143,10 @@ public class PlayerDamageHandler : MonoBehaviour
         {
             yield return new WaitForSeconds(smokeTickInterval);
             if (_inSmokeZone)
-                TemperatureSystem.Instance.AddHeat(smokeHeatPerTick);
+            {
+                Debug.Log($"[PlayerDamageHandler] 💨 Smoke tick — dealing {smokeHeatPerTick:F1}°C.");
+                TemperatureSystem.Instance.AddHeat(smokeHeatPerTick, "Smoke Zone (Tick)");
+            }
         }
     }
 
