@@ -32,11 +32,8 @@ public class DangerousInteractable : MonoBehaviour
             return;
         }
 
-        // selectEntered fires when the player squeezes/grips the object.
-        // It does NOT fire on hover or ray pointer proximity.
         _interactable.selectEntered.AddListener(OnPlayerGrab);
-
-        Debug.Log($"[DangerousInteractable] '{gameObject.name}' armed — damage triggers on grip/select only ✔");
+        Debug.Log($"[DangerousInteractable] '{gameObject.name}' is ready — will deal damage on grip.");
     }
 
     private void OnDestroy()
@@ -49,33 +46,27 @@ public class DangerousInteractable : MonoBehaviour
     {
         // Cooldown check — prevents repeated hits while holding
         if (Time.time - _lastDamageTime < damageCooldown)
-        {
-            Debug.Log($"[DangerousInteractable] '{gameObject.name}' grabbed but on cooldown " +
-                      $"({(damageCooldown - (Time.time - _lastDamageTime)):F1}s remaining).");
             return;
-        }
 
         _lastDamageTime = Time.time;
 
-        // Walk up from the interactor to find PlayerDamageHandler on the XR Rig root
+        // Primary: walk up from the interactor to find PlayerDamageHandler on the XR Rig root.
         var handler = args.interactorObject.transform.GetComponentInParent<PlayerDamageHandler>();
 
+        // Fallback: scene-wide search in case the rig hierarchy is non-standard.
         if (handler == null)
         {
-            Debug.LogWarning($"[DangerousInteractable] '{gameObject.name}' was grabbed but no PlayerDamageHandler " +
-                             "found in the interactor hierarchy. Is PlayerDamageHandler on the XR Rig root?");
-            return;
+            handler = FindObjectOfType<PlayerDamageHandler>();
+
+            if (handler == null)
+            {
+                Debug.LogWarning($"[DangerousInteractable] '{gameObject.name}' was grabbed but " +
+                                 "PlayerDamageHandler couldn't be found anywhere in the scene. " +
+                                 "Make sure it's on your XR Rig root.");
+                return;
+            }
         }
 
-        float tempBefore = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
-
-        Debug.Log($"[DangerousInteractable] 🖐️ '{gameObject.name}' grabbed bare-handed | " +
-                  $"Temp before: {tempBefore:F1}°C — applying damage...");
-
-        handler.OnBareHandTouchedSurface();
-
-        float tempAfter = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
-        Debug.Log($"[DangerousInteractable] ✔ Damage applied | " +
-                  $"Temp: {tempBefore:F1}°C → {tempAfter:F1}°C (+{tempAfter - tempBefore:F1}°C)");
+        handler.OnBareHandTouchedSurface(gameObject.name);
     }
 }

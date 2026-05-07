@@ -43,10 +43,9 @@ public class TemperatureSystem : MonoBehaviour
 
     private void Start()
     {
-        // ── DEBUG: print starting state on spawn ──────────────────────────────
-        Debug.Log($"[TemperatureSystem] Player spawned — " +
-                  $"Temp: {CurrentTemp:F1}°C  |  Max: {maxTemp:F1}°C  |  " +
-                  $"Remaining: {maxTemp - CurrentTemp:F1}°C before game over");
+        Debug.Log($"[Player] You have spawned into the scene. " +
+                  $"Current body temperature: {CurrentTemp:F1}°C. " +
+                  $"Stay safe — game over at {maxTemp:F1}°C!");
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -54,23 +53,13 @@ public class TemperatureSystem : MonoBehaviour
     /// <summary>
     /// Raises the player's temperature.
     /// Pass a human-readable source so debug logs are useful.
-    /// e.g. TemperatureSystem.Instance.AddHeat(2f, "Bare Hand");
     /// </summary>
     public void AddHeat(float amount, string source = "Unknown")
     {
         if (_isDead) return;
 
-        float tempBefore = CurrentTemp;
         CurrentTemp += amount;
         CurrentTemp = Mathf.Clamp(CurrentTemp, startingTemp, maxTemp);
-        float actualAdded = CurrentTemp - tempBefore;
-
-        // ── DEBUG: damage receipt ─────────────────────────────────────────────
-        Debug.Log($"[TemperatureSystem] 🔥 Damage taken — " +
-                  $"Source: {source}  |  " +
-                  $"+{actualAdded:F1}°C  |  " +
-                  $"Temp now: {CurrentTemp:F1}°C / {maxTemp:F1}°C  |  " +
-                  $"Remaining: {maxTemp - CurrentTemp:F1}°C");
 
         PlayDamageVFX();
         onTemperatureChanged?.Invoke(CurrentTemp);
@@ -92,7 +81,8 @@ public class TemperatureSystem : MonoBehaviour
     private void TriggerGameOver()
     {
         _isDead = true;
-        Debug.LogWarning($"[TemperatureSystem] ☠️ GAME OVER — Temp reached {maxTemp:F1}°C");
+        Debug.LogError($"[Player] GAME OVER — your body temperature reached {maxTemp:F1}°C. " +
+                       "You couldn't take the heat!");
         onGameOver?.Invoke();
     }
 }
