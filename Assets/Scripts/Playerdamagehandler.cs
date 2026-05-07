@@ -6,15 +6,14 @@ using UnityEngine;
 // Attach to: XR Rig root (same object as TemperatureSystem)
 //
 // All damage types live here. Toggle each one on/off in the Inspector.
-// Hand contact is now driven by DangerousInteractable on Door/Window objects
-// — no hand colliders needed.
+// Hand contact is driven by DangerousInteractable on Door/Window objects.
 // ─────────────────────────────────────────────────────────────────────────────
 public class PlayerDamageHandler : MonoBehaviour
 {
     // ── Bare hand contact ─────────────────────────────────────────────────────
 
     [Header("Bare hand contact")]
-    [Tooltip("Enable damage when a bare hand hovers over a Door or Window interactable.")]
+    [Tooltip("Enable damage when a bare hand grabs a Door or Window interactable.")]
     public bool bareHandDamageEnabled = true;
 
     [Tooltip("Heat added on bare hand contact.")]
@@ -47,6 +46,12 @@ public class PlayerDamageHandler : MonoBehaviour
     [Tooltip("Heat added on entering a fire zone.")]
     public float fireHeatOnEnter = 5f;
 
+    [Tooltip("Heat added per tick inside fire (continuous damage).")]
+    public float fireHeatPerTick = 2f;
+
+    [Tooltip("Seconds between each fire damage tick.")]
+    public float fireTickInterval = 2f;
+
     [Tooltip("VFX GameObject on the XR Camera to play on fire entry.")]
     public GameObject fireOverlayVFX;
 
@@ -56,42 +61,38 @@ public class PlayerDamageHandler : MonoBehaviour
     // ── Runtime state ─────────────────────────────────────────────────────────
 
     private bool _inSmokeZone = false;
+    private bool _inFireZone = false;
     private Coroutine _smokeDamageCoroutine;
+    private Coroutine _fireDamageCoroutine;
 
-    // ── Bare hand contact (called by DangerousInteractable on Door/Window) ────
+    // ── Bare hand contact (called by DangerousInteractable) ───────────────────
 
-    public void OnBareHandTouchedSurface()
+    /// <param name="objectName">Name of the grabbed object, used in the console message.</param>
+    public void OnBareHandTouchedSurface(string objectName = "object")
     {
-        if (!bareHandDamageEnabled)
-        {
-            Debug.Log("[PlayerDamageHandler] Bare hand contact detected but damage is DISABLED.");
-            return;
-        }
+        if (!bareHandDamageEnabled) return;
 
-        Debug.Log("[PlayerDamageHandler] 🖐️ Bare hand touched dangerous surface — dealing damage.");
+        float tempBefore = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
         ScoreTracker.Instance?.RegisterError();
         TemperatureSystem.Instance.AddHeat(bareHandHeat, "Bare Hand Contact");
+        float tempAfter = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
+
+        Debug.LogWarning($"[Player] Oh no! You touched the {objectName} with your bare hands! " +
+                         $"Your temperature jumped from {tempBefore:F1}°C to {tempAfter:F1}°C.");
+
         PlayVFX(bareHandVFX);
     }
 
-    // ── Zone triggers (called by ZoneTrigger on smoke/fire objects) ───────────
+    // ── Zone triggers (called by ZoneTrigger) ─────────────────────────────────
 
     public void OnEnterSmokeZone()
     {
-        if (!smokeDamageEnabled)
-        {
-            Debug.Log("[PlayerDamageHandler] Entered smoke zone but smoke damage is DISABLED.");
-            return;
-        }
+        if (!smokeDamageEnabled) return;
+        if (_inSmokeZone) return;
 
-        if (_inSmokeZone)
-        {
-            Debug.Log("[PlayerDamageHandler] Entered smoke zone but already tracking one — ignoring.");
-            return;
-        }
-
-        Debug.Log("[PlayerDamageHandler] 💨 Entered SMOKE zone — starting damage loop " +
-                  $"({smokeHeatPerTick:F1}°C every {smokeTickInterval:F1}s).");
+        float currentTemp = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
+        Debug.LogWarning($"[Player] Oh no! You entered a smoke area! " +
+                         $"Your temperature is {currentTemp:F1}°C and rising every {smokeTickInterval:F1}s...");
 
         ScoreTracker.Instance?.RegisterError();
         _inSmokeZone = true;
@@ -101,7 +102,11 @@ public class PlayerDamageHandler : MonoBehaviour
 
     public void OnExitSmokeZone()
     {
-        Debug.Log("[PlayerDamageHandler] 💨 Exited SMOKE zone — damage loop stopped.");
+        if (!_inSmokeZone) return;
+
+        float currentTemp = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
+        Debug.Log($"[Player] You escaped the smoke area. Current temperature: {currentTemp:F1}°C.");
+
         _inSmokeZone = false;
         SetVFX(smokeOverlayVFX, false);
 
@@ -114,39 +119,68 @@ public class PlayerDamageHandler : MonoBehaviour
 
     public void OnEnterFireZone()
     {
-        if (!fireDamageEnabled)
-        {
-            Debug.Log("[PlayerDamageHandler] Entered fire zone but fire damage is DISABLED.");
-            return;
-        }
+        if (!fireDamageEnabled) return;
 
-        Debug.Log($"[PlayerDamageHandler] 🔥 Entered FIRE zone — dealing {fireHeatOnEnter:F1}°C instantly.");
+        float tempBefore = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
         ScoreTracker.Instance?.RegisterError();
-        TemperatureSystem.Instance.AddHeat(fireHeatOnEnter, "Fire Zone");
+        TemperatureSystem.Instance.AddHeat(fireHeatOnEnter, "Fire Zone Entry");
+        float tempAfter = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
+
+        Debug.LogWarning($"[Player] Oh no! You entered a fire area! " +
+                         $"Your temperature spiked from {tempBefore:F1}°C to {tempAfter:F1}°C and keeps climbing!");
+
         PlayVFX(fireOverlayVFX);
 
         if (fireVFXDuration > 0f)
             Invoke(nameof(TurnOffFireVFX), fireVFXDuration);
+
+        if (!_inFireZone)
+        {
+            _inFireZone = true;
+            _fireDamageCoroutine = StartCoroutine(FireDamageLoop());
+        }
     }
 
     public void OnExitFireZone()
     {
-        Debug.Log("[PlayerDamageHandler] 🔥 Exited FIRE zone.");
+        float currentTemp = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
+        Debug.Log($"[Player] You escaped the fire area. Current temperature: {currentTemp:F1}°C.");
+
+        _inFireZone = false;
         SetVFX(fireOverlayVFX, false);
+
+        if (_fireDamageCoroutine != null)
+        {
+            StopCoroutine(_fireDamageCoroutine);
+            _fireDamageCoroutine = null;
+        }
     }
 
-    // ── Smoke loop ────────────────────────────────────────────────────────────
+    // ── Damage loops ──────────────────────────────────────────────────────────
 
     private IEnumerator SmokeDamageLoop()
     {
         while (_inSmokeZone)
         {
             yield return new WaitForSeconds(smokeTickInterval);
-            if (_inSmokeZone)
-            {
-                Debug.Log($"[PlayerDamageHandler] 💨 Smoke tick — dealing {smokeHeatPerTick:F1}°C.");
-                TemperatureSystem.Instance.AddHeat(smokeHeatPerTick, "Smoke Zone (Tick)");
-            }
+            if (!_inSmokeZone) break;
+
+            TemperatureSystem.Instance.AddHeat(smokeHeatPerTick, "Smoke Zone");
+            float currentTemp = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
+            Debug.LogWarning($"[Player] Still in the smoke... your temperature is now {currentTemp:F1}°C!");
+        }
+    }
+
+    private IEnumerator FireDamageLoop()
+    {
+        while (_inFireZone)
+        {
+            yield return new WaitForSeconds(fireTickInterval);
+            if (!_inFireZone) break;
+
+            TemperatureSystem.Instance.AddHeat(fireHeatPerTick, "Fire Zone");
+            float currentTemp = TemperatureSystem.Instance != null ? TemperatureSystem.Instance.CurrentTemp : 0f;
+            Debug.LogWarning($"[Player] Still in the fire! Your temperature is now {currentTemp:F1}°C!");
         }
     }
 
