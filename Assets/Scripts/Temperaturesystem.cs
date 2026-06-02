@@ -3,24 +3,24 @@ using UnityEngine.Events;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TemperatureSystem
-// Attach to: XR Rig (root player object)
+// Attach to: XR Rig root
 //
-// Central stat manager. Everything that damages the player calls
-// TemperatureSystem.Instance.AddHeat(amount, "Source Name").
+// Central stat manager. Call TemperatureSystem.Instance.AddHeat(amount, "Source")
+// from anywhere to raise the player's body temperature.
 // ─────────────────────────────────────────────────────────────────────────────
 public class TemperatureSystem : MonoBehaviour
 {
     public static TemperatureSystem Instance { get; private set; }
 
-    [Header("Temperature settings")]
-    [Tooltip("Starting body temperature in celsius.")]
+    [Header("Temperature Settings")]
+    [Tooltip("Starting body temperature in Celsius.")]
     public float startingTemp = 34f;
 
     [Tooltip("Temperature at which game over triggers.")]
     public float maxTemp = 45f;
 
-    [Header("VFX — damage flash")]
-    [Tooltip("The VFX GameObject on the XR Camera that plays when the player takes any heat damage.")]
+    [Header("VFX — Damage Flash")]
+    [Tooltip("VFX GameObject on the XR Camera that plays on any heat damage.")]
     public GameObject damageVFX;
 
     // ── Events ────────────────────────────────────────────────────────────────
@@ -37,23 +37,18 @@ public class TemperatureSystem : MonoBehaviour
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
-
         CurrentTemp = startingTemp;
     }
 
     private void Start()
     {
-        Debug.Log($"[Player] You have spawned into the scene. " +
-                  $"Current body temperature: {CurrentTemp:F1}°C. " +
-                  $"Stay safe — game over at {maxTemp:F1}°C!");
+        Debug.Log($"[Player] Spawned. Body temperature: {CurrentTemp:F1}°C. " +
+                  $"Game over at {maxTemp:F1}°C — stay safe!");
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Raises the player's temperature.
-    /// Pass a human-readable source so debug logs are useful.
-    /// </summary>
+    /// <summary>Raises body temperature. Pass a readable source for debug logs.</summary>
     public void AddHeat(float amount, string source = "Unknown")
     {
         if (_isDead) return;
@@ -63,6 +58,9 @@ public class TemperatureSystem : MonoBehaviour
 
         PlayDamageVFX();
         onTemperatureChanged?.Invoke(CurrentTemp);
+
+        Debug.Log($"[TemperatureSystem] +{amount:F1}°C from '{source}'. " +
+                  $"Current: {CurrentTemp:F1}°C / {maxTemp:F1}°C");
 
         if (CurrentTemp >= maxTemp)
             TriggerGameOver();
@@ -81,8 +79,7 @@ public class TemperatureSystem : MonoBehaviour
     private void TriggerGameOver()
     {
         _isDead = true;
-        Debug.LogError($"[Player] GAME OVER — your body temperature reached {maxTemp:F1}°C. " +
-                       "You couldn't take the heat!");
+        Debug.LogError($"[Player] GAME OVER — body temperature reached {maxTemp:F1}°C!");
         onGameOver?.Invoke();
     }
 }
