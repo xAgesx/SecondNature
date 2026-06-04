@@ -35,6 +35,7 @@ TagManager:
   - Meteor
   - Fire
   - Smoke
+  - Ruler
   layers:
   - Default
   - TransparentFX
