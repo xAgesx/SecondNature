@@ -1,36 +1,53 @@
+﻿using System.Collections;
 using UnityEngine;
 
-// Attach this to any door tagged "Door" that the player can open with the ruler.
-// When the ruler touches the door, it rotates open.
 public class Unlockable : MonoBehaviour
 {
-    [Tooltip("The door panel Transform to rotate open (should pivot from the hinge edge).")]
+    [Tooltip("The door panel Transform to rotate open (pivot from hinge edge).")]
     public Transform doorPivot;
 
-    [Tooltip("How many degrees to rotate on Y when opening. Negative to flip direction.")]
-    public float openAngle = 90f;
+    [Tooltip("Target Y rotation when the door is fully open.")]
+    public float openAngle = 120f;
 
     [Tooltip("How long the open animation takes in seconds.")]
     public float openDuration = 0.4f;
 
+    [Header("Voice Line")]
+    public AudioClip companionClip;
+
+    [Tooltip("Seconds to wait after the ruler is picked up before the door opens.")]
+    public float openDelay = 4f;
+
     private bool _isOpen = false;
 
-    private void OnTriggerEnter(Collider other)
+    // Call this from the ruler's GrabInteractable
+    // First Select event in the Inspector
+    public void OnRulerPickedUp()
     {
-        // Only respond if not already open
         if (_isOpen) return;
-
-        // Check if the object that touched us has a SchoolTool component
-        if (other.GetComponent<SchoolTool>() == null) return;
-
-        _isOpen = true;
-        StartCoroutine(AnimateOpen());
+        StartCoroutine(DelayedOpen());
+        Debug.Log("[Unlockable] Ruler picked up — door opens in " + openDelay + "s.");
     }
 
-    private System.Collections.IEnumerator AnimateOpen()
+    private IEnumerator DelayedOpen()
     {
+        yield return new WaitForSeconds(openDelay);
+        TryOpen();
+    }
+
+    public void TryOpen()
+    {
+        if (_isOpen) return;
+        _isOpen = true;
+        StartCoroutine(OpenAndSpeak());
+    }
+
+    private IEnumerator OpenAndSpeak()
+    {
+        if (doorPivot == null) { Debug.LogWarning("[Unlockable] doorPivot not assigned."); yield break; }
+
         Quaternion startRot = doorPivot.localRotation;
-        Quaternion endRot = startRot * Quaternion.Euler(0f, openAngle, 0f);
+        Quaternion endRot = Quaternion.Euler(0f, openAngle, 0f);
 
         float elapsed = 0f;
         while (elapsed < openDuration)
@@ -40,7 +57,11 @@ public class Unlockable : MonoBehaviour
             doorPivot.localRotation = Quaternion.Lerp(startRot, endRot, t);
             yield return null;
         }
-
         doorPivot.localRotation = endRot;
+
+        if (companionClip != null && CompanionAI.Instance != null)
+            CompanionAI.Instance.PlayVoiceLine(companionClip, false);
+
+        Debug.Log($"[Unlockable] '{gameObject.name}' opened.");
     }
 }

@@ -1,5 +1,8 @@
-using UnityEngine;
+﻿using UnityEngine;
 
-// Attach this to the Ruler prefab.
-// It does one thing: marks this object as a valid tool for opening doors.
+// ─────────────────────────────────────────────────────────────────────────────
+// SchoolTool
+// Attach to the ruler. Just a marker component — Unlockable detects it.
+// No logic needed here since XRI grab blocks OnTriggerEnter on held objects.
+// ─────────────────────────────────────────────────────────────────────────────
 public class SchoolTool : MonoBehaviour { }
