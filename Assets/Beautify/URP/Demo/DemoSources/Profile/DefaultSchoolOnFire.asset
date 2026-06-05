@@ -10,7 +10,7 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: d7fd9488000d3734a9e00ee676215985, type: 3}
-  m_Name: PenaltyEffect
+  m_Name: DefaultSchoolOnFire
   m_EditorClassIdentifier: 
   components:
   - {fileID: 9203817855049372878}
@@ -516,7 +516,7 @@ MonoBehaviour:
     m_Value: 3
   chromaticAberrationIntensity:
     m_OverrideState: 0
-    m_Value: 0
+    m_Value: 0.0803
   chromaticAberrationShift:
     m_OverrideState: 0
     m_Value: 0
@@ -665,10 +665,10 @@ MonoBehaviour:
     m_OverrideState: 0
     m_Value: 0.15
   vignettingOuterRing:
-    m_OverrideState: 1
-    m_Value: 0.318
+    m_OverrideState: 0
+    m_Value: 0.64
   vignettingInnerRing:
-    m_OverrideState: 1
+    m_OverrideState: 0
     m_Value: 0.803
   vignettingFade:
     m_OverrideState: 0
@@ -693,7 +693,7 @@ MonoBehaviour:
     m_Value: {x: 0.5, y: 0.5}
   vignettingColor:
     m_OverrideState: 0
-    m_Value: {r: 0, g: 0, b: 0, a: 1}
+    m_Value: {r: 0.98490566, g: 0, b: 0, a: 0.74509805}
   vignettingMask:
     m_OverrideState: 0
     m_Value: {fileID: 0}
@@ -795,8 +795,8 @@ MonoBehaviour:
     m_OverrideState: 0
     m_Value: 0
   blurMask:
-    m_OverrideState: 0
-    m_Value: {fileID: 0}
+    m_OverrideState: 1
+    m_Value: {fileID: 2800000, guid: 7461125ec591a1548883bd61123e9138, type: 3}
     dimension: 1
   blurKeepSourceOnTop:
     m_OverrideState: 0
