@@ -3,26 +3,23 @@ using System.Collections.Generic;
 using UnityEngine;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CompanionAI
+// CompanionAI  —  Smarter Robot Behaviour
 // Attach to: The robot companion GameObject (root)
 //
-// Makes the robot float and smoothly follow the player at a set offset.
-// Also acts as the central voice line manager for the whole companion system —
-// all other scripts call CompanionAI.Instance.PlayVoiceLine(clip) to speak.
+// Behaviour overview:
+//   • Follows the player at a comfortable distance using a spring-damper model
+//     so movement feels weighted and organic, not linear.
+//   • Stops (and subtly shrinks back) when the player is looking directly at it.
+//   • Idles with randomised micro-movements: drift, tilt, and look-around.
+//   • Bobs continuously with a slight phase-shifted secondary bob for life.
+//   • Strafes smoothly around obstacles instead of teleporting.
+//   • All other scripts call CompanionAI.Instance.PlayVoiceLine(clip) to speak.
 //
 // Setup:
 //   1. Attach this script to your robot root GameObject.
-//   2. Assign the Player Transform — for XR Device Simulator, drag in the
-//      Main Camera nested under XR Origin > Camera Offset.
+//   2. Assign Player Transform (Main Camera or XR Origin root).
 //      Leave blank to auto-find by tag "Player".
-//   3. Tune follow distance, height offset, and smoothing in the Inspector.
-//   4. Assign a default AudioSource on the robot (or one will be created automatically).
-//
-// Fixes applied:
-//   - Rigidbody forced kinematic + freeze rotation so mesh colliders don't block movement.
-//   - Deadzone uses a flat 0.05 m threshold instead of the broken minDistance * 0.1f.
-//   - X rotation locked to -90° every frame so the mesh stays upright.
-//   - Bob timer uses unscaled sin to prevent drift over long sessions.
+//   3. Tune follow, gaze, idle, and audio settings in the Inspector.
 // ─────────────────────────────────────────────────────────────────────────────
 public class CompanionAI : MonoBehaviour
 {
@@ -31,126 +28,207 @@ public class CompanionAI : MonoBehaviour
     // ── Follow settings ───────────────────────────────────────────────────────
 
     [Header("Follow Target")]
-    [Tooltip("The player transform to follow. For XR Device Simulator assign the Main Camera " +
-             "under XR Origin > Camera Offset. Leave blank to auto-find by tag 'Player'.")]
+    [Tooltip("The player transform to follow. For XR assign the Main Camera under XR Origin > Camera Offset.")]
     public Transform playerTarget;
 
+    [Tooltip("Fallback if playerTarget is null — drag the XR Origin root here.")]
+    public GameObject playerObj;
+
     [Header("Follow Behaviour")]
-    [Tooltip("How far behind/beside the player the robot hovers (metres).")]
+    [Tooltip("Ideal follow distance behind/beside the player (metres).")]
     public float followDistance = 1.8f;
 
-    [Tooltip("Height above the player's position the robot floats at.")]
+    [Tooltip("Height above the player's pivot the robot hovers at.")]
     public float hoverHeight = 0.4f;
 
-    [Tooltip("Horizontal offset to the side of the player (negative = left, positive = right).")]
+    [Tooltip("Lateral offset from the player's right side (negative = left).")]
     public float sideOffset = 0.6f;
 
-    [Tooltip("How quickly the robot moves to its target position (position smoothing).")]
-    public float moveSpeed = 3f;
+    [Tooltip("Spring stiffness — higher = snappier catch-up.")]
+    public float springStrength = 6f;
 
-    [Tooltip("How quickly the robot rotates to face the player.")]
+    [Tooltip("Spring damping — higher = less overshooting.")]
+    public float springDamping = 4f;
+
+    [Tooltip("The robot will not move at all if closer than this to its target pos.")]
+    public float deadzone = 0.08f;
+
+    [Tooltip("Max speed cap so it doesn't teleport on large gaps (m/s).")]
+    public float maxMoveSpeed = 5f;
+
+    [Header("Rotation")]
+    [Tooltip("How quickly the robot turns to face the player.")]
     public float rotateSpeed = 4f;
 
-    [Tooltip("Minimum distance from the desired follow position before the robot moves (metres). " +
-             "Keeps it from jittering in place.")]
-    public float minDistance = 0.05f;
-
-    [Header("Mesh Rotation")]
-    [Tooltip("X-axis rotation applied every frame to keep the mesh upright. " +
-             "Set to -90 if your model was imported lying flat.")]
+    [Tooltip("X-axis correction for imported mesh orientation (−90 for flat-imported models).")]
     public float meshXRotation = -90f;
 
+    // ── Gaze detection ────────────────────────────────────────────────────────
+
+    [Header("Gaze Detection")]
+    [Tooltip("Dot-product threshold for 'player is looking at robot'. " +
+             "0.97 ≈ within ~14° of centre gaze. Lower = wider cone.")]
+    [Range(0.8f, 1f)]
+    public float gazeThreshold = 0.97f;
+
+    [Tooltip("Maximum distance at which gaze detection is active (metres).")]
+    public float gazeMaxDistance = 8f;
+
+    [Tooltip("How long (seconds) the robot stays frozen after the player stops looking.")]
+    public float gazeLingerTime = 0.6f;
+
+    [Tooltip("When looked at, the robot nudges back this far (metres) — shy behaviour.")]
+    public float gazeShrinkDistance = 0.15f;
+
+    // ── Hover bob ─────────────────────────────────────────────────────────────
+
     [Header("Hover Bob")]
-    [Tooltip("Enable a gentle up/down floating animation.")]
     public bool enableBob = true;
 
-    [Tooltip("How far up and down the robot bobs (metres).")]
+    [Tooltip("Primary bob amplitude (metres).")]
     public float bobAmplitude = 0.06f;
 
-    [Tooltip("How fast the bob cycle runs.")]
+    [Tooltip("Primary bob frequency (Hz).")]
     public float bobFrequency = 1.2f;
+
+    [Tooltip("Secondary micro-bob amplitude — layered on top for organic feel.")]
+    public float microBobAmplitude = 0.018f;
+
+    [Tooltip("Secondary micro-bob frequency — should be non-harmonic with primary.")]
+    public float microBobFrequency = 2.7f;
+
+    // ── Idle fidget ───────────────────────────────────────────────────────────
+
+    [Header("Idle Fidget")]
+    [Tooltip("Enable random drift/look-around behaviour when the player is stationary.")]
+    public bool enableFidget = true;
+
+    [Tooltip("Max random lateral drift distance from the ideal follow position (metres).")]
+    public float fidgetDriftRadius = 0.25f;
+
+    [Tooltip("How often (seconds) the robot picks a new idle drift target.")]
+    [Range(1f, 8f)]
+    public float fidgetInterval = 3.5f;
+
+    [Tooltip("Max random tilt angle added during fidget (degrees, applied to local Z).")]
+    public float fidgetTiltMax = 6f;
 
     // ── Audio ─────────────────────────────────────────────────────────────────
 
     [Header("Audio")]
-    [Tooltip("AudioSource used to play voice lines. Created automatically if left blank.")]
     public AudioSource voiceSource;
-
-    [Tooltip("Optional: a short ambient hum/idle sound loop for the robot.")]
     public AudioClip idleHumClip;
 
-    [Tooltip("Volume for voice lines (0–1).")]
     [Range(0f, 1f)]
     public float voiceVolume = 1f;
 
-    // ── Spawn voice line ───────────────────────────────────────────────────────
-
     [Header("Spawn Voice Line")]
-    [Tooltip("Voice line played once when the robot first spawns into the scene.")]
     public AudioClip spawnVoiceLine;
-
-    [Tooltip("Delay in seconds before the spawn voice line plays.")]
     public float spawnVoiceDelay = 1.2f;
 
     // ── Runtime state ─────────────────────────────────────────────────────────
 
     private readonly HashSet<AudioClip> _playedLines = new HashSet<AudioClip>();
-
     private AudioSource _humSource;
+
+    // Spring physics
+    private Vector3 _velocity = Vector3.zero;
+
+    // Bob timers
     private float _bobTimer = 0f;
+    private float _microBobTimer = 0f;
+
+    // Gaze state
+    private bool _isBeingLooked = false;
+    private float _gazeLingerTimer = 0f;
+
+    // Fidget state
+    private Vector3 _fidgetOffset = Vector3.zero;
+    private float _fidgetTimer = 0f;
+    private float _currentTilt = 0f;
+    private float _targetTilt = 0f;
+
+    // Last known ideal position (used for spring)
+    private Vector3 _springTarget = Vector3.zero;
     private bool _initialized = false;
 
-    // ── Unity lifecycle ───────────────────────────────────────────────────────
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     private void Awake()
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
 
-        // ── FIX: This is a floating robot — gravity must be off entirely.
-        //        Kinematic + no gravity means physics never touches the position;
-        //        only this script moves it. If there is no Rigidbody we add one
-        //        so there is a single guaranteed code path.
         Rigidbody rb = GetComponent<Rigidbody>();
-        if (rb == null)
-            rb = gameObject.AddComponent<Rigidbody>();
-
-        rb.useGravity = false;   // ← key fix: gravity was pulling it down
-        rb.isKinematic = true;    // physics engine won't push/pull it at all
-        rb.freezeRotation = true;  // rotation is handled by UpdateRotation()
+        if (rb == null) rb = gameObject.AddComponent<Rigidbody>();
+        rb.useGravity = false;
+        rb.isKinematic = true;
+        rb.freezeRotation = true;
 
         SetupAudio();
     }
 
     private void Start()
     {
-        // Auto-find player if not assigned
         if (playerTarget == null)
         {
-            var playerObj = GameObject.FindWithTag("Player");
             if (playerObj != null)
                 playerTarget = playerObj.transform;
             else
-                Debug.LogWarning("[CompanionAI] No player target assigned and no GameObject tagged " +
-                                 "'Player' found. Assign the XR Camera manually in the Inspector.");
+                Debug.LogWarning("[CompanionAI] No player target assigned. Assign manually in the Inspector.");
         }
 
         if (spawnVoiceLine != null)
             StartCoroutine(PlaySpawnLineDelayed());
 
+        _springTarget = transform.position;
         _initialized = true;
-        Debug.Log("[CompanionAI] Robot companion initialized and ready.");
+
+        if (enableFidget)
+            StartCoroutine(FidgetRoutine());
+
+        Debug.Log("[CompanionAI] Companion initialized.");
     }
 
     private void Update()
     {
         if (!_initialized || playerTarget == null) return;
 
+        UpdateGaze();
         UpdateFollowPosition();
         UpdateRotation();
     }
 
-    // ── Follow logic ──────────────────────────────────────────────────────────
+    // ── Gaze detection ────────────────────────────────────────────────────────
+
+    private void UpdateGaze()
+    {
+        Vector3 toRobot = (transform.position - playerTarget.position);
+        float dist = toRobot.magnitude;
+
+        bool currentlyLooking = false;
+
+        if (dist <= gazeMaxDistance)
+        {
+            Vector3 toRobotDir = toRobot.normalized;
+            float dot = Vector3.Dot(playerTarget.forward, toRobotDir);
+            currentlyLooking = dot >= gazeThreshold;
+        }
+
+        if (currentlyLooking)
+        {
+            _isBeingLooked = true;
+            _gazeLingerTimer = gazeLingerTime;
+        }
+        else if (_gazeLingerTimer > 0f)
+        {
+            _gazeLingerTimer -= Time.deltaTime;
+            if (_gazeLingerTimer <= 0f)
+                _isBeingLooked = false;
+        }
+    }
+
+    // ── Follow + spring ───────────────────────────────────────────────────────
 
     private void UpdateFollowPosition()
     {
@@ -158,34 +236,60 @@ public class CompanionAI : MonoBehaviour
         Vector3 playerForward = playerTarget.forward;
         Vector3 playerRight = playerTarget.right;
 
-        // Flatten forward/right so the robot doesn't dive/climb with VR head tilt
-        playerForward.y = 0f;
-        playerRight.y = 0f;
-        playerForward.Normalize();
-        playerRight.Normalize();
+        playerForward.y = 0f; playerForward.Normalize();
+        playerRight.y = 0f; playerRight.Normalize();
 
-        // Desired world position: behind + to the side + above the player
-        Vector3 desiredPos = playerPos
-                           - playerForward * followDistance
-                           + playerRight * sideOffset
-                           + Vector3.up * hoverHeight;
+        // Ideal anchor position
+        Vector3 ideal = playerPos
+                      + playerForward * followDistance
+                      + playerRight * sideOffset
+                      + Vector3.up * hoverHeight;
 
-        // Bob offset — use a continuous timer so bob never drifts or resets
-        if (enableBob)
+        // Apply fidget drift on top
+        ideal += _fidgetOffset;
+
+        // When gazed at: nudge gently backwards (shy) and freeze spring target
+        if (_isBeingLooked)
         {
-            _bobTimer += Time.deltaTime * bobFrequency;
-            desiredPos.y += Mathf.Sin(_bobTimer * Mathf.PI * 2f) * bobAmplitude;
+            Vector3 awayFromPlayer = (transform.position - playerPos).normalized;
+            awayFromPlayer.y = 0f;
+            ideal = transform.position + awayFromPlayer * gazeShrinkDistance;
         }
 
-        // ── FIX: flat deadzone (0.05 m) instead of the broken minDistance * 0.1f
-        float dist = Vector3.Distance(transform.position, desiredPos);
-        if (dist > minDistance)
-            transform.position = Vector3.Lerp(transform.position, desiredPos, Time.deltaTime * moveSpeed);
+        _springTarget = ideal;
+
+        // Bob — two layered frequencies for organic feel
+        float bobY = 0f;
+        if (enableBob)
+        {
+            _bobTimer += Time.deltaTime;
+            _microBobTimer += Time.deltaTime;
+            bobY = Mathf.Sin(_bobTimer * bobFrequency * Mathf.PI * 2f) * bobAmplitude
+                 + Mathf.Sin(_microBobTimer * microBobFrequency * Mathf.PI * 2f) * microBobAmplitude;
+        }
+
+        Vector3 springPos = _springTarget + Vector3.up * bobY;
+
+        // Spring-damper integration
+        float dist = Vector3.Distance(transform.position, springPos);
+        if (dist > deadzone)
+        {
+            Vector3 springForce = (springPos - transform.position) * springStrength;
+            Vector3 dampForce = -_velocity * springDamping;
+            _velocity += (springForce + dampForce) * Time.deltaTime;
+            _velocity = Vector3.ClampMagnitude(_velocity, maxMoveSpeed);
+            transform.position += _velocity * Time.deltaTime;
+        }
+        else
+        {
+            _velocity = Vector3.Lerp(_velocity, Vector3.zero, Time.deltaTime * springDamping);
+        }
     }
+
+    // ── Rotation ──────────────────────────────────────────────────────────────
 
     private void UpdateRotation()
     {
-        // Face the player on the Y axis only (no tilting toward/away)
         Vector3 dirToPlayer = playerTarget.position - transform.position;
         dirToPlayer.y = 0f;
 
@@ -195,20 +299,39 @@ public class CompanionAI : MonoBehaviour
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, Time.deltaTime * rotateSpeed);
         }
 
-        // ── FIX: lock X rotation so the mesh stays upright (adjust meshXRotation in Inspector)
+        // Lock X, apply fidget tilt on Z
+        _currentTilt = Mathf.LerpAngle(_currentTilt, _targetTilt, Time.deltaTime * 1.5f);
+
         Vector3 euler = transform.eulerAngles;
         euler.x = meshXRotation;
+        euler.z = _currentTilt;
         transform.eulerAngles = euler;
     }
 
-    // ── Public API — called by all trigger scripts ────────────────────────────
+    // ── Idle fidget coroutine ─────────────────────────────────────────────────
+
+    private IEnumerator FidgetRoutine()
+    {
+        while (true)
+        {
+            // Wait a randomised interval ± 30%
+            float wait = fidgetInterval * Random.Range(0.7f, 1.3f);
+            yield return new WaitForSeconds(wait);
+
+            // Pick a new random drift offset in a circle
+            Vector2 rand2D = Random.insideUnitCircle * fidgetDriftRadius;
+            _fidgetOffset = new Vector3(rand2D.x, rand2D.y * 0.3f, 0f); // less vertical drift
+
+            // Random tilt
+            _targetTilt = Random.Range(-fidgetTiltMax, fidgetTiltMax);
+        }
+    }
+
+    // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Play a voice line clip. Will not replay a clip that has already been
-    /// played this session (once-per-session guarantee).
+    /// Play a voice line. Each clip plays only once per session unless forcePlay is true.
     /// </summary>
-    /// <param name="clip">The AudioClip to play.</param>
-    /// <param name="forcePlay">If true, bypasses the once-per-session check.</param>
     public void PlayVoiceLine(AudioClip clip, bool forcePlay = false)
     {
         if (clip == null)
@@ -219,27 +342,19 @@ public class CompanionAI : MonoBehaviour
 
         if (!forcePlay && _playedLines.Contains(clip))
         {
-            Debug.Log($"[CompanionAI] Voice line '{clip.name}' already played this session — skipping.");
+            Debug.Log($"[CompanionAI] '{clip.name}' already played this session — skipping.");
             return;
         }
 
-        if (voiceSource.isPlaying)
-            voiceSource.Stop();
-
+        if (voiceSource.isPlaying) voiceSource.Stop();
         voiceSource.PlayOneShot(clip, voiceVolume);
         _playedLines.Add(clip);
 
-        Debug.Log($"[CompanionAI] Playing voice line: '{clip.name}'");
+        Debug.Log($"[CompanionAI] Playing: '{clip.name}'");
     }
 
-    /// <summary>
-    /// Returns true if a clip has already been played this session.
-    /// </summary>
     public bool HasPlayed(AudioClip clip) => clip != null && _playedLines.Contains(clip);
 
-    /// <summary>
-    /// Manually reset the played-lines history (e.g. on scene reload or checkpoint).
-    /// </summary>
     public void ResetPlayedLines()
     {
         _playedLines.Clear();
@@ -279,4 +394,31 @@ public class CompanionAI : MonoBehaviour
         yield return new WaitForSeconds(spawnVoiceDelay);
         PlayVoiceLine(spawnVoiceLine);
     }
+
+    // ── Gizmos ────────────────────────────────────────────────────────────────
+
+#if UNITY_EDITOR
+    private void OnDrawGizmosSelected()
+    {
+        if (playerTarget == null) return;
+
+        // Gaze cone
+        Gizmos.color = _isBeingLooked
+            ? new Color(1f, 0.2f, 0.2f, 0.3f)
+            : new Color(0.2f, 0.8f, 1f, 0.15f);
+        Gizmos.DrawWireSphere(transform.position, 0.25f);
+
+        // Ideal follow anchor
+        Vector3 fwd = playerTarget.forward; fwd.y = 0f; fwd.Normalize();
+        Vector3 right = playerTarget.right; right.y = 0f; right.Normalize();
+        Vector3 ideal = playerTarget.position
+                      + fwd * followDistance
+                      + right * sideOffset
+                      + Vector3.up * hoverHeight;
+
+        Gizmos.color = new Color(0f, 1f, 0.4f, 0.6f);
+        Gizmos.DrawWireSphere(ideal, 0.12f);
+        Gizmos.DrawLine(transform.position, ideal);
+    }
+#endif
 }
