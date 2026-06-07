@@ -61,13 +61,13 @@ public class ProximityDetector : MonoBehaviour
     }
 
 #if UNITY_EDITOR
-    private void OnDrawGizmosSelected()
+    private void OnDrawGizmos()
     {
         if (!showGizmo) return;
         Vector3 origin = playerTransform != null ? playerTransform.position : transform.position;
-        Gizmos.color = new Color(1f, 0.4f, 0f, 0.25f);
+        Gizmos.color = new Color(1f, 0.4f, 0f, 0.15f);
         Gizmos.DrawSphere(origin, detectionRadius);
-        Gizmos.color = new Color(1f, 0.4f, 0f, 0.8f);
+        Gizmos.color = new Color(1f, 0.4f, 0f, 0.6f);
         Gizmos.DrawWireSphere(origin, detectionRadius);
     }
 #endif
