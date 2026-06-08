@@ -22,11 +22,11 @@ public class IntroCutscene : MonoBehaviour
 
     [Header("Vibrant PostFX")]
     public Volume cutsceneVolume;
-    [Range(0f, 2f)] public float saturation = 1.2f;
-    [Range(0f, 2f)] public float bloomIntensity = 1.5f;
-    [Range(0f, 1f)] public float bloomScatter = 0.4f;
-    [Range(-2f, 2f)] public float exposure = 0.8f;
-    [Range(-100f, 100f)] public float contrast = 30f;
+    [Range(0f, 2f)] public float saturation = 2.0f;
+    [Range(0f, 3f)] public float bloomIntensity = 2.5f;
+    [Range(0f, 1f)] public float bloomScatter = 0.85f;
+    [Range(-2f, 2f)] public float exposure = 1.5f;
+    [Range(-100f, 100f)] public float contrast = 5f;
 
     [Header("Audio")]
     public AudioSource sfxSource;
@@ -43,9 +43,9 @@ public class IntroCutscene : MonoBehaviour
     public CanvasGroup blinkCanvasGroup;
 
     [Header("Cutscene Lighting")]
-    public Color cutsceneAmbient = new Color(0.5f, 0.45f, 0.4f);
-    public Color cutsceneFogColor = new Color(0.6f, 0.55f, 0.5f);
-    public float cutsceneFogDensity = 0.008f;
+    public Color cutsceneAmbient = new Color(0.9f, 0.82f, 0.88f);
+    public Color cutsceneFogColor = new Color(0.92f, 0.88f, 0.95f);
+    public float cutsceneFogDensity = 0.002f;
 
     [Header("Sit")]
     [Range(0f, 0.5f)]
@@ -69,7 +69,7 @@ public class IntroCutscene : MonoBehaviour
     public float runAmpH = 0.012f;
 
     [Header("Alarm Effects")]
-    public Color alarmFlashColor = new Color(1f, 0.15f, 0.05f);
+    public Color alarmFlashColor = new Color(1f, 0.3f, 0.15f);
     public float alarmFlashSpeed = 4f;
 
     [Header("Dizziness")]
@@ -92,23 +92,38 @@ public class IntroCutscene : MonoBehaviour
     private Vector3 _offsetOrigin;
     private bool _playing;
 
-    // state saving
-    private List<Light> _lights = new List<Light>();
-    private List<Volume> _volumes = new List<Volume>();
-    private List<ParticleSystem> _particles = new List<ParticleSystem>();
-    private bool[] _lightState;
-    private bool[] _volState;
-    private bool[] _partState;
+    // state saving - lights
+    private List<Light> _allLights = new List<Light>();
+    private bool[] _lightStates;
+    private List<Light> _dirLights = new List<Light>();
+    private bool[] _dirLightStates;
+    private Color[] _dirLightColors;
+    private float[] _dirLightIntensities;
+
+    // state saving - volumes
+    private List<Volume> _allVolumes = new List<Volume>();
+    private List<GameObject> _volGOs = new List<GameObject>();
+    private bool[] _volGOActiveStates;
+
+    // state saving - particles
+    private List<ParticleSystem> _allParticles = new List<ParticleSystem>();
+    private bool[] _particleStates;
+
+    // state saving - render settings (probably ignored in URP 17 but kept for edge cases)
+    private bool _savedFogState;
+    private Color _savedFogColor;
+    private float _savedFogDensity;
+    private Color _savedAmbientLight;
+    private AmbientMode _savedAmbientMode;
+
+    // state saving - camera
     private bool _camPost;
-    private bool _fogState;
-    private Color _fogColor;
-    private float _fogDensity;
-    private Color _ambientLight;
-    private AmbientMode _ambientMode;
-    private Light _dirLight;
-    private bool _dirLightState;
-    private Color _dirColor;
-    private float _dirIntensity;
+
+    // state saving - known interfering scripts
+    private List<MonoBehaviour> _interferingScripts = new List<MonoBehaviour>();
+    private bool[] _interferingScriptStates;
+
+    // state saving - XR
     private XRInteractionManager _xrManager;
     private bool _xrManagerState;
 
@@ -312,7 +327,6 @@ public class IntroCutscene : MonoBehaviour
         // Stand
         yield return StartCoroutine(Stand());
         yield return new WaitForSeconds(alarmDuration * 0.2f);
-        if (vol != null) vol.weight = 0f;
 
         // Run to door-hit
         int hitIdx = Mathf.Clamp(doorHitWaypointIndex, deskIdx + 1, _waypoints.Length - 1);
@@ -323,6 +337,7 @@ public class IntroCutscene : MonoBehaviour
         }
 
         // Door slam + hit
+        yield return StartCoroutine(UnapplyAmbiance()); // restore normal look before hit
         if (doorLeaf != null) yield return StartCoroutine(SlamDoor());
         yield return new WaitForSeconds(0.1f);
         yield return StartCoroutine(HitEffect());
@@ -380,31 +395,30 @@ public class IntroCutscene : MonoBehaviour
 
     private void SaveWorldState()
     {
-        _lights.Clear(); _volumes.Clear(); _particles.Clear();
-        _lights.AddRange(FindObjectsOfType<Light>(true));
-        _volumes.AddRange(FindObjectsOfType<Volume>(true));
-        _particles.AddRange(FindObjectsOfType<ParticleSystem>(true));
+        _allLights.Clear(); _allLights.AddRange(FindObjectsByType<Light>(FindObjectsSortMode.None));
+        _lightStates = _allLights.Select(l => l.enabled).ToArray();
 
-        _lightState = new bool[_lights.Count];
-        _volState = new bool[_volumes.Count];
-        _partState = new bool[_particles.Count];
-        for (int i = 0; i < _lights.Count; i++) _lightState[i] = _lights[i].enabled;
-        for (int i = 0; i < _volumes.Count; i++) _volState[i] = _volumes[i].enabled;
-        for (int i = 0; i < _particles.Count; i++) _partState[i] = _particles[i].isPlaying;
+        _dirLights.Clear();
+        _dirLightStates = null; _dirLightColors = null; _dirLightIntensities = null;
+        var dirs = _allLights.Where(l => l.type == LightType.Directional).ToArray();
+        _dirLights.AddRange(dirs);
+        _dirLightStates = _dirLights.Select(l => l.enabled).ToArray();
+        _dirLightColors = _dirLights.Select(l => l.color).ToArray();
+        _dirLightIntensities = _dirLights.Select(l => l.intensity).ToArray();
 
-        _fogState = RenderSettings.fog;
-        _fogColor = RenderSettings.fogColor;
-        _fogDensity = RenderSettings.fogDensity;
-        _ambientLight = RenderSettings.ambientLight;
-        _ambientMode = RenderSettings.ambientMode;
+        _allVolumes.Clear(); _allVolumes.AddRange(FindObjectsByType<Volume>(FindObjectsSortMode.None));
+        _volGOs.Clear(); _volGOActiveStates = null;
+        _volGOs = _allVolumes.Select(v => v.gameObject).ToList();
+        _volGOActiveStates = _volGOs.Select(go => go.activeSelf).ToArray();
 
-        _dirLight = FindObjectOfType<Light>(true);
-        if (_dirLight != null && _dirLight.type == LightType.Directional)
-        {
-            _dirLightState = _dirLight.enabled;
-            _dirColor = _dirLight.color;
-            _dirIntensity = _dirLight.intensity;
-        }
+        _allParticles.Clear(); _allParticles.AddRange(FindObjectsByType<ParticleSystem>(FindObjectsSortMode.None));
+        _particleStates = _allParticles.Select(p => p.isPlaying).ToArray();
+
+        _savedFogState = RenderSettings.fog;
+        _savedFogColor = RenderSettings.fogColor;
+        _savedFogDensity = RenderSettings.fogDensity;
+        _savedAmbientLight = RenderSettings.ambientLight;
+        _savedAmbientMode = RenderSettings.ambientMode;
 
         if (_playerCam != null)
         {
@@ -412,36 +426,60 @@ public class IntroCutscene : MonoBehaviour
             if (cd == null) cd = _playerCam.gameObject.AddComponent<UniversalAdditionalCameraData>();
             _camPost = cd.renderPostProcessing;
         }
+
+        _interferingScripts.Clear();
+        var allScripts = FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None);
+        foreach (var mb in allScripts)
+        {
+            if (mb == null || mb == this || !mb.enabled) continue;
+            string name = mb.GetType().Name.ToLowerInvariant();
+            if (name.Contains("postfx") || name.Contains("post_fx") || name.Contains("posteffect") ||
+                name.Contains("volume") || name.Contains("lighting") || name.Contains("haze") ||
+                name.Contains("smoke") || name.Contains("fire") || name.Contains("heat"))
+            {
+                _interferingScripts.Add(mb);
+            }
+        }
+        _interferingScriptStates = _interferingScripts.Select(mb => mb.enabled).ToArray();
     }
 
     private void ApplyCutsceneAmbiance()
     {
-        foreach (var l in _lights) if (l != null) l.enabled = false;
-        foreach (var v in _volumes) if (v != null && v != cutsceneVolume) v.enabled = false;
-        foreach (var p in _particles) if (p != null) p.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+        foreach (var go in _volGOs)
+        {
+            if (go != null && go != cutsceneVolume.gameObject)
+                go.SetActive(false);
+        }
+
+        foreach (var p in _allParticles) if (p != null) p.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+
+        foreach (var mb in _interferingScripts) if (mb != null) mb.enabled = false;
+
+        foreach (var dl in _dirLights)
+        {
+            if (dl == null) continue;
+            dl.enabled = true;
+            dl.color = new Color(1f, 0.97f, 0.92f);
+            dl.intensity = 2.0f;
+        }
+
+        foreach (var l in _allLights)
+        {
+            if (l == null || l.type == LightType.Directional) continue;
+            l.enabled = false;
+        }
 
         if (_playerCam != null)
         {
             var cd = _playerCam.GetComponent<UniversalAdditionalCameraData>();
             if (cd == null) cd = _playerCam.gameObject.AddComponent<UniversalAdditionalCameraData>();
             cd.renderPostProcessing = true;
-            cd.volumeLayerMask = LayerMask.GetMask("Default");
+            cd.volumeLayerMask = -1;
         }
 
-        RenderSettings.fog = true;
-        RenderSettings.fogColor = cutsceneFogColor;
-        RenderSettings.fogDensity = cutsceneFogDensity;
-        RenderSettings.fogMode = FogMode.Exponential;
-
-        RenderSettings.ambientMode = AmbientMode.Flat;
-        RenderSettings.ambientLight = cutsceneAmbient;
-        RenderSettings.ambientIntensity = 1.0f;
-
-        if (_dirLight != null)
+        if (cutsceneVolume != null)
         {
-            _dirLight.enabled = true;
-            _dirLight.color = new Color(1f, 0.9f, 0.8f);
-            _dirLight.intensity = 0.8f;
+            cutsceneVolume.priority = 999;
         }
 
         if (ambienceClip != null && ambienceSource != null)
@@ -451,21 +489,54 @@ public class IntroCutscene : MonoBehaviour
         }
     }
 
+    private IEnumerator UnapplyAmbiance()
+    {
+        float dur = 1f;
+        float t = 0f;
+        while (t < dur)
+        {
+            t += Time.deltaTime;
+            float p = t / dur;
+            foreach (var dl in _dirLights)
+            {
+                if (dl == null) continue;
+                dl.color = Color.Lerp(new Color(1f, 0.97f, 0.92f), Color.white, p);
+                dl.intensity = Mathf.Lerp(2f, 1f, p);
+            }
+            yield return null;
+        }
+    }
+
     private void RestoreWorldState()
     {
-        for (int i = 0; i < _lights.Count; i++) if (_lights[i] != null) _lights[i].enabled = _lightState[i];
-        for (int i = 0; i < _volumes.Count; i++) if (_volumes[i] != null) _volumes[i].enabled = _volState[i];
-        for (int i = 0; i < _particles.Count; i++) if (_particles[i] != null && _partState[i]) _particles[i].Play();
+        for (int i = 0; i < _volGOs.Count; i++)
+            if (_volGOs[i] != null && _volGOActiveStates != null && i < _volGOActiveStates.Length)
+                _volGOs[i].SetActive(_volGOActiveStates[i]);
 
-        RenderSettings.fog = _fogState;
-        RenderSettings.fogColor = _fogColor;
-        RenderSettings.fogDensity = _fogDensity;
-        RenderSettings.ambientMode = _ambientMode;
-        RenderSettings.ambientLight = _ambientLight;
+        for (int i = 0; i < _allLights.Count; i++)
+            if (_allLights[i] != null && _lightStates != null && i < _lightStates.Length)
+                _allLights[i].enabled = _lightStates[i];
 
-        if (_dirLight != null) _dirLight.enabled = _dirLightState;
-        if (_dirLight != null) _dirLight.color = _dirColor;
-        if (_dirLight != null) _dirLight.intensity = _dirIntensity;
+        for (int i = 0; i < _dirLights.Count; i++)
+        {
+            if (_dirLights[i] == null) continue;
+            if (_dirLightStates != null && i < _dirLightStates.Length) _dirLights[i].enabled = _dirLightStates[i];
+            if (_dirLightColors != null && i < _dirLightColors.Length) _dirLights[i].color = _dirLightColors[i];
+            if (_dirLightIntensities != null && i < _dirLightIntensities.Length) _dirLights[i].intensity = _dirLightIntensities[i];
+        }
+
+        for (int i = 0; i < _allParticles.Count; i++)
+            if (_allParticles[i] != null && _particleStates != null && i < _particleStates.Length && _particleStates[i])
+                _allParticles[i].Play();
+
+        for (int i = 0; i < _interferingScripts.Count; i++)
+            if (_interferingScripts[i] != null && _interferingScriptStates != null && i < _interferingScriptStates.Length)
+                _interferingScripts[i].enabled = _interferingScriptStates[i];
+
+        if (cutsceneVolume != null)
+        {
+            cutsceneVolume.priority = 100;
+        }
 
         if (ambienceSource != null) ambienceSource.Stop();
 
@@ -675,9 +746,14 @@ public class IntroCutscene : MonoBehaviour
         _baseVignette = _vignette != null ? _vignette.intensity.value : 0f;
     }
 
+
+
+    // ── VOLUME SETUP ──
+
     private void SetupVibrant(Volume vol)
     {
         if (vol == null) return;
+        vol.priority = 999;
         VolumeProfile p = vol.profile;
         if (p == null) { p = ScriptableObject.CreateInstance<VolumeProfile>(); vol.profile = p; _rtProfile = p; }
 
@@ -689,18 +765,18 @@ public class IntroCutscene : MonoBehaviour
         ca.contrast.overrideState = true;
         ca.saturation.value = saturation * 100f;
         ca.saturation.overrideState = true;
-        ca.colorFilter.value = new Color(1f, 0.92f, 0.85f);
+        ca.colorFilter.value = new Color(1f, 0.95f, 0.92f);
         ca.colorFilter.overrideState = true;
 
         Bloom bl;
         p.TryGet(out bl); if (bl == null) bl = p.Add<Bloom>(true);
-        bl.threshold.value = 0.5f;
+        bl.threshold.value = 0.2f;
         bl.threshold.overrideState = true;
         bl.intensity.value = bloomIntensity;
         bl.intensity.overrideState = true;
         bl.scatter.value = bloomScatter;
         bl.scatter.overrideState = true;
-        bl.tint.value = new Color(1f, 0.85f, 0.5f);
+        bl.tint.value = new Color(1f, 0.92f, 0.75f);
         bl.tint.overrideState = true;
         bl.dirtTexture.value = null;
         bl.dirtTexture.overrideState = false;
@@ -712,17 +788,17 @@ public class IntroCutscene : MonoBehaviour
 
         WhiteBalance wb;
         p.TryGet(out wb); if (wb == null) wb = p.Add<WhiteBalance>(true);
-        wb.temperature.value = 30f;
+        wb.temperature.value = 5f;
         wb.temperature.overrideState = true;
 
         p.TryGet(out _vignette); if (_vignette == null) _vignette = p.Add<Vignette>(true);
-        _vignette.intensity.value = 0.2f;
+        _vignette.intensity.value = 0.04f;
         _vignette.intensity.overrideState = true;
-        _vignette.smoothness.value = 0.35f;
+        _vignette.smoothness.value = 0.5f;
         _vignette.smoothness.overrideState = true;
-        _vignette.color.value = Color.black;
+        _vignette.color.value = Color.white;
         _vignette.color.overrideState = true;
-        _baseVignette = 0.2f;
+        _baseVignette = 0.04f;
 
         p.TryGet(out _chroma); if (_chroma == null) _chroma = p.Add<ChromaticAberration>(true);
         _chroma.intensity.value = 0f;
@@ -730,12 +806,12 @@ public class IntroCutscene : MonoBehaviour
 
         LiftGammaGain lg;
         p.TryGet(out lg); if (lg == null) lg = p.Add<LiftGammaGain>(true);
-        lg.lift.value = new Vector4(0.03f, 0.02f, 0f, 0f);
+        lg.lift.value = new Vector4(0.03f, 0.04f, 0.05f, 0f);
         lg.lift.overrideState = true;
 
         ShadowsMidtonesHighlights smh;
         p.TryGet(out smh); if (smh == null) smh = p.Add<ShadowsMidtonesHighlights>(true);
-        smh.shadows.value = new Vector4(1f, 0.8f, 0.5f, 0.5f);
+        smh.shadows.value = new Vector4(1.15f, 0.85f, 1.05f, 0.35f);
         smh.shadows.overrideState = true;
         smh.highlights.value = new Vector4(1f, 1f, 1f, 1f);
         smh.highlights.overrideState = true;
@@ -783,7 +859,7 @@ public class IntroCutscene : MonoBehaviour
     {
         if (cutsceneVolume != null) return cutsceneVolume;
         GameObject go = new GameObject("CutsceneVolume"); go.transform.SetParent(transform);
-        Volume v = go.AddComponent<Volume>(); v.isGlobal = true; v.weight = 0f; v.priority = 100f;
+        Volume v = go.AddComponent<Volume>(); v.isGlobal = true; v.weight = 0f; v.priority = 999f;
         cutsceneVolume = v; return v;
     }
 
