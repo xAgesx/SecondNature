@@ -153,7 +153,7 @@ Material:
     - _GlossMapScale: 0
     - _Glossiness: 0
     - _GlossyReflections: 0
-    - _Metallic: 0.05
+    - _Metallic: 6.38
     - _NormalStrength: 0.75
     - _OcclusionStrength: 1
     - _Parallax: 0.005
@@ -171,7 +171,7 @@ Material:
     - _ZWrite: 1
     - _ZWriteControl: 0
     m_Colors:
-    - _BaseColor: {r: 0.5686275, g: 0.78431374, b: 1, a: 1}
+    - _BaseColor: {r: 0.6595728, g: 0.7429939, b: 0.82641506, a: 1}
     - _BumpOffset: {r: 0, g: 0, b: 0, a: 0}
     - _BumpTiling: {r: 4, g: 2, b: 0, a: 0}
     - _Color: {r: 0.5686274, g: 0.78431374, b: 1, a: 1}
